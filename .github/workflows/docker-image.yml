@@ -45,7 +45,7 @@ jobs:
       with:
         context: .
         push: true
-        tags: yourdockerhubusername/my-python-app:latest
+        tags: bomberg997/binance-telegram-bot
 
     env:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
