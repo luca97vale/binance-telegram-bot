@@ -29,8 +29,9 @@ jobs:
           exit 1
         else
           echo "✅ DOCKER_PASSWORD is set"
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          echo "DOCKER_PASSWORD starts with: ${DOCKER_PASSWORD:0:3}"
         fi
+        
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -47,3 +48,7 @@ jobs:
         context: .
         push: true
         tags: yourdockerhubusername/my-python-app:latest
+
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
