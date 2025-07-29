@@ -21,6 +21,7 @@ jobs:
           exit 1
         else
           echo "✅ DOCKER_USERNAME is set"
+          echo "DOCKER_USERNAME starts with: ${DOCKER_USERNAME:0:3}"
         fi
 
         if [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
@@ -28,8 +29,8 @@ jobs:
           exit 1
         else
           echo "✅ DOCKER_PASSWORD is set"
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         fi
-
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
