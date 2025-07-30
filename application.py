@@ -159,7 +159,8 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{symbol}:\n"
                 f"  Amount: {total_qty:.6f}\n"
                 f"  Avg. Purchase Price: ${avg_price:.4f}\n"
-                f"  Current Value: ${value_usd:.2f}\n\n"
+                f"  Current Value: ${value_usd:.2f}\n"
+                f"  Current {symbol} Value: ${current_price:.4f}\n\n"
             )
 
         await update.message.reply_text(msg)
