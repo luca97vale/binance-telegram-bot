@@ -2,24 +2,23 @@ import asyncio
 import os
 from datetime import datetime
 
-from binance import BinanceAPIException
+from binance.spot import Spot
+from binance.error import ClientError
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, ApplicationBuilder
-from binance.client import Client
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Your keys
 BINANCE_API_KEY = os.environ["binance_api_key"]
 BINANCE_API_SECRET = os.environ["binance_api_secret"]
 TELEGRAM_BOT_TOKEN = os.environ["telegram_bot_token"]
 
-binance_client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+binance_client = Spot(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["/wallet"],
-        ["/total"],["/open_order"],
-       # ["/order_bought"],
-       # ["/order_sold"],
+        ["/total"],
+        ["/open_order"],
         ["/show_last_trades"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -29,48 +28,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Telegram bot command
-#async def order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#    args = context.args
-#    if not args:
-#        await update.message.reply_text("Usage:\n/order bought\n/order sold")
-#        return
-#
-#    subcommand = args[0].lower()
-#    if subcommand == "bought":
-#        await show_orders(update, side="BUY")
-#    elif subcommand == "sold":
-#        await show_orders(update, side="SELL")
-#    else:
-#        await update.message.reply_text("Invalid subcommand. Use:\n/order bought\n/order sold")
-
 async def get_traded_symbols():
-    # Use the full symbol list from Binance exchange
-    exchange_info = binance_client.get_exchange_info()
+    exchange_info = binance_client.exchange_info()
     symbols = [s["symbol"] for s in exchange_info["symbols"] if s["quoteAsset"] == "USDT"]
 
     traded_symbols = []
     for symbol in symbols:
         try:
-            trades = binance_client.get_my_trades(symbol=symbol)
+            trades = binance_client.my_trades(symbol=symbol)
             if trades:
                 traded_symbols.append(symbol)
-        except BinanceAPIException as e:
-            if "Invalid symbol" in str(e):
-                continue  # Skip
-            raise e  # Raise other errors
-
+        except ClientError as e:
+            if "Invalid symbol" in str(e.error_message):
+                continue
+            raise e
     return traded_symbols
 
 async def show_orders(update: Update, side: str, limit: int = None):
     try:
-        account_info = binance_client.get_account()
+        account_info = binance_client.account()
         symbols = await get_traded_symbols()
 
         trades = []
         for symbol in symbols:
             try:
-                symbol_trades = binance_client.get_my_trades(symbol=symbol)
+                symbol_trades = binance_client.my_trades(symbol=symbol)
                 for trade in symbol_trades:
                     is_buy = trade["isBuyer"]
                     if (side == "BUY" and is_buy) or (side == "SELL" and not is_buy):
@@ -81,13 +63,12 @@ async def show_orders(update: Update, side: str, limit: int = None):
                             "time": trade["time"],
                         })
             except Exception:
-                continue  # skip symbols that raise errors
+                continue
 
         if not trades:
             await update.message.reply_text(f"No {side.lower()} orders found.")
             return
 
-        # Sort and optionally limit
         trades = sorted(trades, key=lambda x: x["time"], reverse=True)
         if limit:
             trades = trades[:limit]
@@ -97,27 +78,22 @@ async def show_orders(update: Update, side: str, limit: int = None):
             date_str = datetime.utcfromtimestamp(t["time"] / 1000).strftime('%Y-%m-%d %H:%M:%S UTC')
             msg_lines.append(f"- {t['symbol']}: {t['qty']} @ {t['price']} on {date_str}")
 
-        # If too many trades, paginate manually
-        MAX_LENGTH = 4000  # Telegram max message size
+        MAX_LENGTH = 4000
         message = ""
         for line in msg_lines:
             if len(message) + len(line) + 1 > MAX_LENGTH:
                 await update.message.reply_text(message, parse_mode="Markdown")
                 message = ""
             message += line + "\n"
-
         if message:
             await update.message.reply_text(message, parse_mode="Markdown")
 
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
 
-# /wallet command: show asset amount, average purchase price, and USD value
 async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
-
-        account_info = client.get_account()
+        account_info = binance_client.account()
         balances = account_info['balances']
         non_zero = [b for b in balances if float(b['free']) + float(b['locked']) > 0]
 
@@ -134,22 +110,30 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if symbol in ["BUSD", "USDT"]:
                 avg_price = 1.0
                 value_usd = total_qty
+                current_price = 1.0
             else:
                 try:
-                    trades = client.get_my_trades(symbol=symbol + "USDT")
+                    trades = binance_client.my_trades(symbol=symbol + "USDT")
+                    trades += binance_client.my_trades(symbol=symbol + "USDC")
                 except Exception:
                     trades = []
 
                 if not trades:
                     avg_price = 0
                 else:
-                    total_qty_traded = sum(float(t['qty']) for t in trades)
-                    total_cost = sum(float(t['qty']) * float(t['price']) for t in trades)
-                    avg_price = total_cost / total_qty_traded if total_qty_traded > 0 else 0
+                    # Only use BUY trades
+                    buy_trades = [t for t in trades if t['isBuyer']]
+
+                    if not buy_trades:
+                        avg_price = 0
+                    else:
+                        total_qty_bought = sum(float(t['qty']) for t in buy_trades)
+                        total_cost_bought = sum(float(t['qty']) * float(t['price']) for t in buy_trades)
+                        avg_price = total_cost_bought / total_qty_bought if total_qty_bought > 0 else 0
 
                 try:
-                    ticker = client.get_symbol_ticker(symbol=symbol + "USDT")
-                    current_price = float(ticker['price']) if 'price' in ticker else 0
+                    ticker = binance_client.ticker_price(symbol=symbol + "USDT")
+                    current_price = float(ticker['price'])
                 except Exception:
                     current_price = 0
 
@@ -168,12 +152,9 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
 
-# /total command: return total wallet value in USD
 async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
-
-        account_info = client.get_account()
+        account_info = binance_client.account()
         balances = account_info['balances']
         non_zero = [b for b in balances if float(b['free']) + float(b['locked']) > 0]
 
@@ -191,8 +172,8 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 value_usd = total_qty
             else:
                 try:
-                    ticker = client.get_symbol_ticker(symbol=symbol + "USDT")
-                    current_price = float(ticker['price']) if 'price' in ticker else 0
+                    ticker = binance_client.ticker_price(symbol=symbol + "USDT")
+                    current_price = float(ticker['price'])
                 except Exception:
                     current_price = 0
                 value_usd = total_qty * current_price
@@ -206,8 +187,7 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def open_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
-        open_orders = client.get_open_orders()
+        open_orders = binance_client.get_open_orders()
 
         if not open_orders:
             await update.message.reply_text("You have no open orders.")
@@ -233,25 +213,15 @@ async def open_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
 
-#async def order_bought(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#    await show_orders(update, side="BUY", limit=None)
-#
-#async def order_sold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#    await show_orders(update, side="SELL", limit=None)
+SELECTED_SYMBOLS = ["ETHUSDT", "AVAXUSDT", "USDCUSDT", "ZROUSDT", "EURUSDT"]
 
-
-# Symbols of interest
-SELECTED_SYMBOLS = [
-    "ETHUSDT", "AVAXUSDT", "USDCUSDT", "ZROUSDT", "EURUSDT"
-    # USDTUSDT doesn't make sense and can be omitted
-]
 async def show_last_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         all_trades = []
 
         for symbol in SELECTED_SYMBOLS:
             try:
-                trades = binance_client.get_my_trades(symbol=symbol)
+                trades = binance_client.my_trades(symbol=symbol)
                 for trade in trades:
                     all_trades.append({
                         "symbol": symbol,
@@ -260,8 +230,8 @@ async def show_last_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "price": trade["price"],
                         "time": trade["time"],
                     })
-            except BinanceAPIException as e:
-                if "Invalid symbol" in str(e):
+            except ClientError as e:
+                if "Invalid symbol" in str(e.error_message):
                     continue
                 else:
                     raise e
@@ -270,7 +240,6 @@ async def show_last_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("You have no ETH, AVAX, USDC, ZRO, EUR trades.")
             return
 
-        # Sort by time (latest first) and limit to 50
         latest_trades = sorted(all_trades, key=lambda t: t["time"], reverse=True)[:50]
 
         msg_lines = ["*Last 50 orders (ETH, AVAX, USDC, ZRO, EUR):*"]
@@ -283,8 +252,6 @@ async def show_last_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
 
-
-# Main entry point
 def main() -> None:
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -292,13 +259,9 @@ def main() -> None:
     app.add_handler(CommandHandler("wallet", wallet))
     app.add_handler(CommandHandler("total", total))
     app.add_handler(CommandHandler("open_order", open_order))
-    #app.add_handler(CommandHandler("order", order))
-    #app.add_handler(CommandHandler("order_bought", order_bought))
-    #app.add_handler(CommandHandler("order_sold", order_sold))
     app.add_handler(CommandHandler("show_last_trades", show_last_trades))
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
-
