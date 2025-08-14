@@ -459,7 +459,9 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         total_value = 0.0
+        asset_values = []
 
+        # Calculate value for each asset
         for asset in non_zero:
             symbol = asset['asset']
             total_qty = float(asset['free']) + float(asset['locked'])
@@ -475,8 +477,27 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 value_usd = total_qty * current_price
 
             total_value += value_usd
+            asset_values.append({
+                'symbol': symbol,
+                'quantity': total_qty,
+                'value_usd': value_usd
+            })
 
-        await update.message.reply_text(f"💵 Estimated total wallet value: ${total_value:.2f}")
+        # Build response with percentages
+        response = f"💵 **Portfolio Summary**\n"
+        response += f"Total Value: ${total_value:.2f}\n\n"
+
+        # Sort assets by value (highest first)
+        asset_values.sort(key=lambda x: x['value_usd'], reverse=True)
+
+        for asset in asset_values:
+            if total_value > 0:
+                percentage = (asset['value_usd'] / total_value) * 100
+                response += f"{asset['symbol']}: ${asset['value_usd']:.2f} ({percentage:.1f}%)\n"
+            else:
+                response += f"{asset['symbol']}: ${asset['value_usd']:.2f} (0.0%)\n"
+
+        await update.message.reply_text(response)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
