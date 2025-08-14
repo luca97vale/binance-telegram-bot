@@ -20,7 +20,6 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy your source code
-COPY . .
-
+COPY . /app
 # Set default command
-CMD ["python", "application.py"]
+CMD ["python", "main.py"]

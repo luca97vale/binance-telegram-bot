@@ -602,7 +602,7 @@ async def get_portfolio_total():
 
 def main() -> None:
     # API in background thread
-    api_thread = threading.Thread(target=lambda: uvicorn.run(web_server, port=8000))
+    api_thread = threading.Thread(target=lambda: uvicorn.run(web_server, host="0.0.0.0", port=8000))
     api_thread.start()
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
