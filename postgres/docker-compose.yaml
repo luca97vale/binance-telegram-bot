@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  timescaledb:
+    build: .
+    container_name: timescaledb
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    ports:
+      - "5442:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    networks:
+      mynetwork:
+
+volumes:
+  timescale_data:
+
+networks:
+  mynetwork:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

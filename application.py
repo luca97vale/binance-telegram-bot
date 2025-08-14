@@ -1,11 +1,21 @@
 import asyncio
+import logging
 import os
+import threading
+import json
 from datetime import datetime
+from typing import Any, Coroutine
 
+import uvicorn
 from binance.spot import Spot
 from binance.error import ClientError
+from fastapi import FastAPI
+from pydantic import TypeAdapter
+from starlette.responses import JSONResponse
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+from dto.totalDTO import totalDTO, totalDTOList
 
 # Your keys
 BINANCE_API_KEY = os.environ["binance_api_key"]
@@ -450,13 +460,31 @@ async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        totals = await total_web_server()
+        total_value = sum (t.value_usd for t in totals.items)
+        # Build response with percentages
+        response = f"💵 **Portfolio Summary**\n"
+        response += f"Total Value: ${total_value:.2f}\n\n"
+        for total in totals.items:
+            if total_value > 0:
+                percentage = (total.value_usd / total_value) * 100
+                response += f"{total.symbol}: ${total.value_usd:.2f} ({percentage:.1f}%)\n"
+            else:
+                response += f"{total['symbol']}: ${total['value_usd']:.2f} (0.0%)\n"
+
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error: {e}")
+
+async def total_web_server() -> totalDTOList | None:
+    try:
         account_info = binance_client.account()
         balances = account_info['balances']
         non_zero = [b for b in balances if float(b['free']) + float(b['locked']) > 0]
 
         if not non_zero:
-            await update.message.reply_text("Your wallet is empty.")
-            return
+            return None
 
         total_value = 0.0
         asset_values = []
@@ -482,25 +510,19 @@ async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'quantity': total_qty,
                 'value_usd': value_usd
             })
-
-        # Build response with percentages
-        response = f"💵 **Portfolio Summary**\n"
-        response += f"Total Value: ${total_value:.2f}\n\n"
-
         # Sort assets by value (highest first)
         asset_values.sort(key=lambda x: x['value_usd'], reverse=True)
 
+        totals = totalDTOList()
         for asset in asset_values:
             if total_value > 0:
                 percentage = (asset['value_usd'] / total_value) * 100
-                response += f"{asset['symbol']}: ${asset['value_usd']:.2f} ({percentage:.1f}%)\n"
-            else:
-                response += f"{asset['symbol']}: ${asset['value_usd']:.2f} (0.0%)\n"
-
-        await update.message.reply_text(response)
+                totals.append(totalDTO(symbol=asset['symbol'],value_usd= asset['value_usd'], percentage=percentage))
+        return totals
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {e}")
+        #await update.message.reply_text(f"⚠️ Error: {e}")
+        logging.ERROR("fdasf")
 
 async def open_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -569,7 +591,19 @@ async def show_last_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
 
+# Your existing bot logic + new API endpoints
+web_server = FastAPI()
+
+@web_server.get("/portfolio/total")
+async def get_portfolio_total():
+    # Use your existing calculation logic
+    portfolio_data = await total_web_server()  # Your existing function
+    return portfolio_data
+
 def main() -> None:
+    # API in background thread
+    api_thread = threading.Thread(target=lambda: uvicorn.run(web_server, port=8000))
+    api_thread.start()
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
