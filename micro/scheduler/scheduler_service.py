@@ -1,7 +1,7 @@
 # scheduler_service.py
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram_client import TelegramClient
@@ -21,10 +21,14 @@ class PortfolioScheduler:
         )
         self.running = False
 
-    async def take_daily_snapshot(self):
-        """Take daily portfolio snapshot"""
+    async def take_daily_snapshot(self, manual):
+        """Take daily portfolio snapshot
+        :param manual:
+        """
         try:
             current_date = datetime.now(timezone.utc).date()
+            if manual is False:
+                current_date = current_date - timedelta(days=1)
             logger.info(f"📸 Taking daily snapshot for {current_date}")
 
             # Get portfolio total from telegram bot
@@ -55,7 +59,7 @@ class PortfolioScheduler:
     async def manual_snapshot(self):
         """Take manual snapshot (for testing)"""
         logger.info("🔧 Taking manual snapshot")
-        return await self.take_daily_snapshot()
+        return await self.take_daily_snapshot(manual=True)
 
     def start(self):
         """Start the scheduler"""
@@ -68,6 +72,7 @@ class PortfolioScheduler:
             self.scheduler.add_job(
                 self.take_daily_snapshot,
                 CronTrigger(hour=0, minute=00, timezone='UTC'),
+                [False],
                 id='daily_snapshot',
                 name='Daily Portfolio Snapshot',
                 replace_existing=True
